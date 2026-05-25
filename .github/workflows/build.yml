@@ -124,7 +124,7 @@ jobs:
         EOF
 
     - name: Compile and Package APK File
-      run: gradle assembleDebug
+      run: gw assembleDebug
 
     - name: Deliver Completed App File
       uses: actions/upload-artifact@v3
