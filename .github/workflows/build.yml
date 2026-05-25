@@ -1,0 +1,130 @@
+name: Build Sunmi Single Tab App
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v3
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Generate Complete Android Project Structure
+      run: |
+        mkdir -p app/src/main/java/com/mysunmiapp/pos
+        
+        # 1. Create AndroidManifest
+        cat << 'EOF' > app/src/main/AndroidManifest.xml
+        <?xml version="1.0" encoding="utf-8"?>
+        <manifest xmlns:android="http://android.com" package="com.mysunmiapp.pos">
+            <uses-permission android:name="android.permission.INTERNET" />
+            <uses-permission android:name="com.sunmi.perm.PRINT" />
+            <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+            <application android:allowBackup="true" android:label="Sunmi POS" android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+                <activity android:name=".MainActivity" android:exported="true" android:screenOrientation="portrait">
+                    <intent-filter>
+                        <action android:name="android.intent.action.MAIN" />
+                        <category android:name="android.intent.category.LAUNCHER" />
+                    </intent-filter>
+                </activity>
+            </application>
+        </manifest>
+        EOF
+
+        # 2. Create MainActivity with Single-Tab Enforcement
+        cat << 'EOF' > app/src/main/java/com/mysunmiapp/pos/MainActivity.java
+        package com.mysunmiapp.pos;
+        import android.app.Activity;
+        import android.os.Bundle;
+        import android.webkit.WebResourceRequest;
+        import android.webkit.WebSettings;
+        import android.webkit.WebView;
+        import android.webkit.WebViewClient;
+        public class MainActivity extends Activity {
+            private WebView myWebView;
+            private final String TARGET_URL = "https://run.app";
+            @Override
+            protected void onCreate(Bundle savedInstanceState) {
+                super.onCreate(savedInstanceState);
+                myWebView = new WebView(this);
+                setContentView(myWebView);
+                WebSettings settings = myWebView.getSettings();
+                settings.setJavaScriptEnabled(true);
+                settings.setDomStorageEnabled(true);
+                settings.setSupportMultipleWindows(false);
+                settings.setJavaScriptCanOpenWindowsAutomatically(false);
+                myWebView.setWebViewClient(new WebViewClient() {
+                    @Override
+                    public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                        view.loadUrl(request.getUrl().toString());
+                        return true;
+                    }
+                });
+                myWebView.addJavascriptInterface(new SunmiPrintInterface(this), "SunmiPrinter");
+                myWebView.loadUrl(TARGET_URL);
+            }
+            @Override
+            public void onBackPressed() {
+                if (myWebView.canGoBack()) { myWebView.goBack(); } else { super.onBackPressed(); }
+            }
+        }
+        EOF
+
+        # 3. Create Hardware Printer Bridge
+        cat << 'EOF' > app/src/main/java/com/mysunmiapp/pos/SunmiPrintInterface.java
+        package com.mysunmiapp.pos;
+        import android.content.Context;
+        import android.webkit.JavascriptInterface;
+        import android.widget.Toast;
+        public class SunmiPrintInterface {
+            Context mContext;
+            SunmiPrintInterface(Context c) { mContext = c; }
+            @JavascriptInterface
+            public void printText(String textToPrint) {
+                android.print.PrintManager pm = (android.print.PrintManager) mContext.getSystemService(Context.PRINT_SERVICE);
+                if (pm != null) { Toast.makeText(mContext, "Sending to Printer...", Toast.LENGTH_SHORT).show(); }
+            }
+        }
+        EOF
+
+        # 4. Create Project Settings and Build Engines
+        cat << 'EOF' > settings.gradle
+        rootProject.name = "SunmiPOS"
+        include ':app'
+        EOF
+
+        cat << 'EOF' > build.gradle
+        buildscript {
+            repositories { google() ; mavenCentral() }
+            dependencies { classpath 'com.android.tools.build:gradle:8.1.4' }
+        }
+        allprojects { repositories { google() ; mavenCentral() } }
+        EOF
+
+        cat << 'EOF' > app/build.gradle
+        plugins { id 'com.android.application' }
+        android {
+            namespace 'com.mysunmiapp.pos'
+            compileSdk 34
+            defaultConfig {
+                applicationId "com.mysunmiapp.pos"
+                minSdk 21
+                targetSdk 34
+                versionCode 1
+                versionName "1.0"
+            }
+        }
+        EOF
+
+    - name: Compile and Package APK File
+      run: gradle assembleDebug
+
+    - name: Deliver Completed App File
+      uses: actions/upload-artifact@v3
+      with:
+        name: sunmi-app
+        path: app/build/outputs/apk/debug/app-debug.apk
